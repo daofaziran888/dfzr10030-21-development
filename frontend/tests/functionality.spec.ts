@@ -583,3 +583,48 @@ test('概览汇总', async ({ page }) => {
   await expect(page.locator('.stat-value').nth(1)).toBeVisible()
   // 验证概览页加载正常即可，不硬编码精确计数（取决于各模块 E2E 登记成功数）
 })
+
+test('校验运行包：按采样执行、异常样本回查与监控待办同步', async ({ page }) => {
+  test.setTimeout(300_000)
+  const browserErrors: string[] = []
+  page.on('pageerror', e => browserErrors.push(e.message))
+  page.on('response', r => { if (r.url().includes('/api/') && r.status() >= 400) browserErrors.push(`${r.status()} ${r.url()}`) })
+
+  await page.goto('/validator')
+  await page.waitForTimeout(1000)
+  const runRows = page.locator('[data-testid^="run-row-"]')
+  const before = await runRows.count()
+
+  await page.getByTestId('run-ratio').fill('50%')
+  await page.getByTestId('create-run').click()
+  const detail = page.getByTestId('run-detail')
+  await expect(detail).toBeVisible({ timeout: 10000 })
+  await expect(runRows).toHaveCount(before + 1)
+
+  await expect(detail).toContainText('数据版本')
+  await expect(detail).toContainText('采样与规则执行')
+  const abnormalRows = detail.locator('[data-testid^="abnormal-"]')
+  const abnormalCount = await abnormalRows.count()
+  expect(abnormalCount).toBeGreaterThan(0)
+  for (let i = 0; i < abnormalCount; i++) {
+    const text = await abnormalRows.nth(i).innerText()
+    expect(text).toContain('运行包')
+    expect(text).toMatch(/采样 \d+%/)
+  }
+  const conclusion = (await detail.locator('.conclusion').first().innerText()).trim()
+  if (conclusion === '阻断') {
+    await expect(detail.getByTestId('run-warning')).toContainText('不能视为通过')
+  }
+
+  // 监控页同步显示阻断数量，待办台账能回到来源运行包。
+  await page.goto('/monitor')
+  await page.waitForTimeout(800)
+  await page.getByTestId('relay-runs').click()
+  await page.waitForTimeout(1500)
+  const blockingCard = page.getByTestId('validation-card-阻断数量')
+  await expect(blockingCard).toBeVisible()
+  await expect(blockingCard.locator('strong')).not.toHaveText('0')
+  await expect(page.locator('[data-testid^="todo-"]').first()).toBeVisible()
+
+  expect(browserErrors).toEqual([])
+})

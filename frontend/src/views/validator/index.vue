@@ -76,6 +76,8 @@
       <span>共 {{ total }} 条采集结果校验记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
+
+    <ValidationRunPanel />
   </section>
 </template>
 
@@ -83,6 +85,7 @@
 import { computed, onMounted, ref } from 'vue'
 
 import { request } from '@/api/client'
+import ValidationRunPanel from '@/components/ValidationRunPanel.vue'
 
 type Row = Record<string, string | number | null>
 

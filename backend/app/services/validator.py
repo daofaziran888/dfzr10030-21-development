@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.validation_runs import bump_rule_revision
 from app.store import store
 
 MODULE = "validator"
@@ -48,6 +49,7 @@ class ValidatorService:
         entry["pending"] = True
         entry["abnormal"] = False
         rows.append(entry)
+        bump_rule_revision()
         return entry, []
 
     def run_action(self, entry_id: int, action: str) -> tuple[dict[str, Any] | None, str]:
@@ -62,4 +64,5 @@ class ValidatorService:
         entry["status"] = target
         entry["pending"] = target != STATUS_ORDER[-1]
         entry["abnormal"] = action in NEGATIVE_ACTIONS
+        bump_rule_revision()
         return entry, f"校验规则已{action}"

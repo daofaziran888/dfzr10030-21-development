@@ -25,12 +25,89 @@
       <tbody><tr v-for="row in results" :key="row.id"><td v-for="c in resultColumns" :key="c">{{ row[c] ?? '—' }}</td></tr></tbody>
     </table>
     <p v-if="!results.length && !loading" style="text-align:center;color:var(--muted)">请配置参数后运行分析</p>
+
+    <section class="validation-block" data-testid="validation-monitor">
+      <header class="validation-head">
+        <div>
+          <h3>校验运行包监控</h3>
+          <p class="validation-desc">
+            采集监控服务读取校验运行包，把异常样本和无法判定状态计入当日告警；待办台账可直接回到来源运行包。
+            <span v-if="validation?.['服务版本']" data-testid="monitor-service-version">
+              当前版本：{{ validation['服务版本'] }}（校验服务 {{ validation['校验服务版本'] }}）
+            </span>
+          </p>
+        </div>
+        <button class="btn" data-testid="relay-runs" type="button" @click="relayRuns">核对未接力运行包</button>
+      </header>
+      <div class="validation-cards">
+        <article v-for="card in validationCards" :key="card.label" class="analysis-card" :data-testid="`validation-card-${card.label}`">
+          <span style="font-size:12px;color:var(--muted)">{{ card.label }}</span>
+          <strong style="font-size:22px;display:block">{{ card.value }}</strong>
+          <span style="font-size:12px;color:var(--muted)">{{ card.hint }}</span>
+        </article>
+      </div>
+      <p v-if="validationMessage" class="validation-message" data-testid="validation-message">{{ validationMessage }}</p>
+      <p v-if="validation?.['空态原因']" class="validation-empty" data-testid="validation-empty">{{ validation['空态原因'] }}</p>
+      <p v-else-if="validation?.['接力空态原因']" class="validation-empty" data-testid="validation-relay-empty">{{ validation['接力空态原因'] }}</p>
+      <table class="data-table" v-if="validation && validation['待办'].length">
+        <thead>
+          <tr><th>待办编号</th><th>来源运行包</th><th>异常样本</th><th>阻断规则</th><th>异常原因</th><th>阻断级别</th><th>处理状态</th><th>数据版本</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="todo in validation['待办']" :key="todo['待办编号']" :data-testid="`todo-${todo['待办编号']}`">
+            <td>{{ todo['待办编号'] }}</td>
+            <td>{{ todo['来源运行包'] }}</td>
+            <td>{{ todo['来源样本'] }}</td>
+            <td>{{ todo['校验规则'] }}</td>
+            <td>{{ todo['异常原因'] }}</td>
+            <td>{{ todo['阻断级别'] }}</td>
+            <td>{{ todo['处理状态'] }}</td>
+            <td>{{ todo['数据版本'] }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="validation-empty" data-testid="validation-todo-empty">
+        {{ validation?.['待办空态原因'] || '暂无校验待办' }}
+      </p>
+    </section>
   </section>
 </template>
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { request } from '@/api/client'
 const ENDPOINT = '/api/monitor'
+const validation = ref<any>(null)
+const validationMessage = ref('')
+const validationCards = computed(() => {
+  const v = validation.value
+  return [
+    { label: '今日运行包', value: v?.['今日运行包数'] ?? 0, hint: `累计 ${v?.['运行包数量'] ?? 0} 个` },
+    { label: '阻断数量', value: v?.['阻断数量'] ?? 0, hint: `${v?.['阻断运行包数'] ?? 0} 个运行包被阻断` },
+    { label: '当日告警', value: v?.['当日告警'] ?? 0, hint: `异常样本 ${v?.['异常样本数'] ?? 0} + 无法判定 ${v?.['无法判定数'] ?? 0}` },
+    { label: '待处理待办', value: v?.['待处理待办'] ?? 0, hint: `台账共 ${v?.['待办数'] ?? 0} 条` },
+  ]
+})
+async function loadValidation() {
+  try {
+    const res = await request(`${ENDPOINT}/validation`)
+    if (!res.ok) throw new Error('校验监控读取失败')
+    validation.value = await res.json()
+  } catch (e) {
+    validationMessage.value = e instanceof Error ? e.message : '校验监控读取失败'
+  }
+}
+async function relayRuns() {
+  validationMessage.value = ''
+  try {
+    const res = await request(`${ENDPOINT}/validation/relay`, { method: 'POST' })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '核对失败')
+    validationMessage.value = `已核对 ${data['核对运行包数']} 个运行包，新增待办 ${data['新增待办数']} 条`
+    await loadValidation()
+  } catch (e) {
+    validationMessage.value = e instanceof Error ? e.message : '核对失败'
+  }
+}
 const summaryMetrics = ref<{label:string;value:number;trend:number}[]>([])
 const results = ref<any[]>([]); const chartData = ref<{label:string;value:number}[]>([])
 const loading = ref(false)
@@ -45,5 +122,14 @@ async function runAnalysis() {
   try { const res = await request(`${ENDPOINT}/run`, { method: 'POST', body: JSON.stringify({ values: params.value }) }); const data = await res.json(); results.value = data.items || []; chartData.value = (data.items || []).map((r: any) => ({ label: Object.values(r)[0] as string, value: Object.values(r).filter(v => typeof v === 'number')[0] as number || 0 })).slice(0, 6) } catch(e) { results.value = [] }
   loading.value = false
 }
-onMounted(fetchSummary)
+onMounted(() => { void fetchSummary(); void loadValidation() })
 </script>
+<style scoped>
+.validation-block { margin-top: 28px; }
+.validation-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.validation-head h3 { margin: 0; font-size: 16px; }
+.validation-desc { color: var(--muted); font-size: 12px; margin: 4px 0 0; max-width: 720px; }
+.validation-cards { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
+.validation-message { font-size: 13px; color: #15803d; }
+.validation-empty { font-size: 12px; color: var(--muted); text-align: center; }
+</style>
